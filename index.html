@@ -1,12 +1,204 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MDCC Stock Tracker</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MDCC Stock Tracker</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+body { background: #f0f4f8; }
+.header { background: #1F4E79; color: white; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 20px; }
+.upload-btn { background: #2E75B6; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; }
+.msg { padding: 10px 24px; font-weight: bold; font-size: 14px; display: none; }
+.msg.error { background: #fee2e2; color: #991b1b; display: block; }
+.msg.success { background: #dcfce7; color: #166534; display: block; }
+.content { padding: 20px 24px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab { padding: 10px 28px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; font-size: 15px; background: #e2e8f0; color: #374151; }
+.tab.active { background: #1F4E79; color: white; }
+.stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat { border-radius: 10px; padding: 12px 20px; min-width: 120px; text-align: center; }
+.stat .num { font-size: 24px; font-weight: bold; }
+.stat .lbl { font-size: 12px; margin-top: 2px; }
+.search { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 14px; margin-bottom: 16px; }
+.table-wrap { overflow-x: auto; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; background: white; }
+thead tr { background: #1F4E79; color: white; }
+th { padding: 12px 14px; text-align: left; font-size: 13px; white-space: nowrap; }
+td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #e2e8f0; }
+tr:nth-child(even) td { background: #f8fafc; }
+.empty { text-align: center; padding: 30px; color: #94a3b8; }
+.green { color: #166534; font-weight: bold; }
+.red { color: #991b1b; font-weight: bold; }
+.orange { color: #92400e; font-weight: bold; }
+.blue { color: #1e40af; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>📦 MDCC Stock Tracker</h1>
+    <div id="lastUpdated" style="font-size:12px;opacity:0.8;margin-top:4px;"></div>
+  </div>
+  <label class="upload-btn">
+    📤 رفع Excel
+    <input type="file" accept=".xlsx,.xls" id="fileInput" style="display:none">
+  </label>
+</div>
+<div class="msg" id="msg"></div>
+<div class="content">
+  <div class="tabs">
+    <button class="tab active" id="tabNE" onclick="switchTab('NE')">🟦 Neropan (NE)</button>
+    <button class="tab" id="tabAB" onclick="switchTab('AB')">🟥 Abet (AB)</button>
+  </div>
+  <div class="stats">
+    <div class="stat" style="background:#dbeafe"><div class="num blue" id="sTotal">0</div><div class="lbl blue">إجمالي Items</div></div>
+    <div class="stat" style="background:#dcfce7"><div class="num green" id="sStock">0</div><div class="lbl green">موجود بالمخزن</div></div>
+    <div class="stat" style="background:#fef3c7"><div class="num orange" id="sZero">0</div><div class="lbl orange">صفر</div></div>
+    <div class="stat" style="background:#fee2e2"><div class="num red" id="sNeg">0</div><div class="lbl red">سالب ⚠️</div></div>
+  </div>
+  <input class="search" placeholder="🔍 ابحث بالكود أو الاسم..." id="searchBox" oninput="renderTable()">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Item Code</th><th>Description</th><th>On Hand Qty</th><th>Sheets</th></tr></thead>
+      <tbody id="tbody"><tr><td colspan="5" class="empty">⏳ جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+var SB_URL = 'https://pzuqxfmakmpjdfwpwrfa.supabase.co'
+var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB6dXF4Zm1ha21wamRmd3B3cmZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3MTM5NTksImV4cCI6MjA5ODI4OTk1OX0.GMcd2wu0vX1t2pWr_Cvxa330PYWCkj9ZQUrLZ0Vka3k'
+
+var allItems = [], activeTab = 'NE'
+
+function sbFetch(path, options) {
+  var opts = options || {}
+  opts.headers = opts.headers || {}
+  opts.headers['apikey'] = SB_KEY
+  opts.headers['Authorization'] = 'Bearer ' + SB_KEY
+  opts.headers['Content-Type'] = 'application/json'
+  if (opts.upsert) {
+    opts.headers['Prefer'] = 'resolution=merge-duplicates'
+    delete opts.upsert
+  }
+  return fetch(SB_URL + '/rest/v1/' + path, opts)
+}
+
+function showMsg(t, type) {
+  var el = document.getElementById('msg')
+  el.textContent = t
+  el.className = 'msg ' + type
+}
+
+async function loadItems() {
+  var r = await sbFetch('stock_items?select=*&order=itemcode.asc')
+  if (!r.ok) { showMsg('❌ خطأ: ' + r.status, 'error'); return }
+  allItems = await r.json()
+  if (allItems.length > 0) {
+    var last = new Date(Math.max.apply(null, allItems.map(function(d){ return new Date(d.last_updated) })))
+    document.getElementById('lastUpdated').textContent = 'آخر تحديث: ' + last.toLocaleString('ar')
+  }
+  renderTable()
+}
+
+function switchTab(tab) {
+  activeTab = tab
+  document.getElementById('tabNE').className = 'tab' + (tab==='NE'?' active':'')
+  document.getElementById('tabAB').className = 'tab' + (tab==='AB'?' active':'')
+  renderTable()
+}
+
+function renderTable() {
+  var search = (document.getElementById('searchBox').value || '').toLowerCase()
+  var filtered = allItems.filter(function(item) {
+    if (item.brand !== activeTab) return false
+    if (search) return (item.itemcode||'').toLowerCase().indexOf(search)>=0 || (item.description||'').toLowerCase().indexOf(search)>=0
+    return true
+  })
+  document.getElementById('sTotal').textContent = filtered.length
+  document.getElementById('sStock').textContent = filtered.filter(function(i){return i.qty>0}).length
+  document.getElementById('sZero').textContent = filtered.filter(function(i){return i.qty===0}).length
+  document.getElementById('sNeg').textContent = filtered.filter(function(i){return i.qty<0}).length
+  var tbody = document.getElementById('tbody')
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">' + (allItems.length===0?'📂 ارفع Excel لتشوف الـ stock':'لا يوجد نتائج') + '</td></tr>'
+    return
+  }
+  tbody.innerHTML = filtered.map(function(item, idx) {
+    return '<tr><td>'+(idx+1)+'</td><td class="blue">'+item.itemcode+'</td><td>'+(item.description||'')+'</td><td style="text-align:center" class="'+(item.qty>0?'green':item.qty<0?'red':'orange')+'">'+item.qty+'</td><td style="color:#64748b">'+(item.sheets||'—')+'</td></tr>'
+  }).join('')
+}
+
+document.getElementById('fileInput').addEventListener('change', async function(e) {
+  var file = e.target.files[0]
+  if (!file) return
+  showMsg('⏳ عم بقرأ الملف...', 'success')
+  var reader = new FileReader()
+  reader.onload = async function(evt) {
+    try {
+      var wb = XLSX.read(evt.target.result, {type:'binary'})
+      var ws = wb.Sheets[wb.SheetNames[0]]
+      var rows = XLSX.utils.sheet_to_json(ws, {header:1})
+      var headerRow=-1, headers=[]
+      for (var i=0; i<rows.length; i++) {
+        var row = rows[i]
+        if (!Array.isArray(row)) continue
+        var up = row.map(function(c){return String(c==null?'':c).trim().toUpperCase()})
+        if (up.some(function(c){return c==='ITEMCODE'||c==='ITEM CODE'})) { headerRow=i; headers=up; break }
+      }
+      if (headerRow===-1) { showMsg('❌ ما لقيت Itemcode!','error'); return }
+      var iCode = headers.indexOf('ITEMCODE')>=0 ? headers.indexOf('ITEMCODE') : headers.indexOf('ITEM CODE')
+      var iDesc = headers.findIndex(function(h){return h.indexOf('DESCRIPTION')>=0})
+      var iQty = headers.findIndex(function(h){return h.indexOf('ON HAND')>=0})
+      var iSheet = headers.findIndex(function(h){return h==='SHEETS'||h==='SHEET'})
+      var iCat = headers.findIndex(function(h){return h.indexOf('CATEGORY')>=0})
+      var parsed=[], seen={}
+      for (var i=headerRow+1; i<rows.length; i++) {
+        var row = rows[i]
+        if (!Array.isArray(row)) continue
+        var code = String(row[iCode]==null?'':row[iCode]).trim()
+        if (!code) continue
+        var up = code.toUpperCase()
+        if (up.indexOf('NE-')!==0 && up.indexOf('AB-')!==0) continue
+        if (up.indexOf('CHIPBOARD')>=0) continue
+        if (seen[code]) continue
+        seen[code] = true
+        parsed.push({
+          itemcode: code,
+          description: iDesc>=0 ? String(row[iDesc]==null?'':row[iDesc]).trim() : '',
+          qty: iQty>=0 ? (parseFloat(row[iQty])||0) : 0,
+          sheets: iSheet>=0 ? String(row[iSheet]==null?'':row[iSheet]).trim() : '',
+          brand: up.indexOf('NE-')===0 ? 'NE' : 'AB',
+          category: iCat>=0 ? String(row[iCat]==null?'':row[iCat]).trim() : '',
+          last_updated: new Date().toISOString()
+        })
+      }
+      if (!parsed.length) { showMsg('❌ ما لقيت NE- أو AB- items!','error'); return }
+      showMsg('⏳ عم بحفظ '+parsed.length+' item...','success')
+      
+      var r = await sbFetch('stock_items', {
+        method: 'POST',
+        upsert: true,
+        body: JSON.stringify(parsed)
+      })
+      
+      if (!r.ok) {
+        var err = await r.text()
+        showMsg('❌ ' + err, 'error')
+        return
+      }
+      showMsg('✅ تم رفع '+parsed.length+' item!','success')
+      await loadItems()
+    } catch(err) { showMsg('❌ '+err.message,'error') }
+    e.target.value = ''
+  }
+  reader.readAsBinaryString(file)
+})
+
+loadItems()
+</script>
+</body>
 </html>
